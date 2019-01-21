@@ -2,6 +2,7 @@
 # Copyright (c) 2013 Shotgun Software, Inc
 # ----------------------------------------------------
 #
+from collections import defaultdict
 import os
 import sys
 import unicodedata
@@ -24,7 +25,26 @@ class MenuGenerator(object):
         """
         self._engine = engine
         self._menu_name = menu_name
-        self.root_menu = None
+        self._app_commands = self.get_all_app_commands()
+        self.root_menu = self.setup_root_menu()
+
+        # now add the context item on top of the main menu
+        self._context_menu = self._add_context_menu()
+        self.root_menu.addSeparator()
+
+        apps_commands = defaultdict(list)
+        for app_command in self._app_commands:
+            if app_command.favourite:
+                app_command.add_command_to_menu(self.root_menu)
+
+            if app_command.get_type() == "context_menu":
+                app_command.add_command_to_menu(self._context_menu)
+            else:
+                app_name = app_command.get_app_name() or "Other Items"
+                apps_commands[app_name].append(app_command)
+        self.root_menu.addSeparator()
+
+        self._add_app_menu(apps_commands)
 
     @property
     def engine(self):
@@ -36,94 +56,54 @@ class MenuGenerator(object):
         """The name of the menu to be generated."""
         return self._menu_name
 
-    def create_menu(self):
+    def get_all_app_commands(self):
+        commands = []
+        favourites = self.engine.get_setting("menu_favourites", default=[])
+
+        for cmd_name, cmd_details in sorted(self.engine.commands.items()):
+            app_command = AppCommand(cmd_name, cmd_details)
+
+            for item in favourites:
+                matching_app_and_name = (
+                    app_command.name == item["name"] and
+                    app_command.get_app_instance_name() == item["app_instance"]
+                )
+                if matching_app_and_name:
+                    app_command.favourite = True
+                    break
+
+            commands.append(app_command)
+        return commands
+
+    def setup_root_menu(self):
         """
-        Create the Shotgun Menu.
-        """
-        # Get the shotgun menu
-        self.root_menu = self.get_or_create_root_menu(self.menu_name)
+        Attempts to find an existing menu of the specified title.
 
-        # 'surfacing, Assets chair' menu
-        menu_handle = self.root_menu
-
-        # now add the context item on top of the main menu
-        self._context_menu = self._add_context_menu(menu_handle)
-        menu_handle.addSeparator()
-
-        # now enumerate all items and create menu objects for them
-        menu_items = []
-        for (cmd_name, cmd_details) in self.engine.commands.items():
-             menu_items.append(AppCommand(cmd_name, cmd_details))
-
-        # sort list of commands in name order
-        menu_items.sort(key=lambda x: x.name)
-
-        # now add favourites
-        for fav in self.engine.get_setting("menu_favourites"):
-            app_instance_name = fav["app_instance"]
-            menu_name = fav["name"]
-
-            # scan through all menu items
-            for cmd in menu_items:
-                 if cmd.get_app_instance_name() == app_instance_name and cmd.name == menu_name:
-                     # found our match!
-                     cmd.add_command_to_menu(menu_handle)
-                     # mark as a favourite item
-                     cmd.favourite = True
-
-        menu_handle.addSeparator()
-
-        # now go through all of the menu items.
-        # separate them out into various sections
-        commands_by_app = {}
-
-        for cmd in menu_items:
-            if cmd.get_type() == "context_menu":
-                # context menu!
-                cmd.add_command_to_menu(self._context_menu)
-
-            else:
-                # normal menu
-                app_name = cmd.get_app_name()
-                if app_name is None:
-                    # un-parented app
-                    app_name = "Other Items"
-                if not app_name in commands_by_app:
-                    commands_by_app[app_name] = []
-                commands_by_app[app_name].append(cmd)
-
-        # now add all apps to main menu
-        self._add_app_menu(commands_by_app, menu_handle)
-
-    @classmethod
-    def get_or_create_root_menu(cls, menu_name):
-        """
-        Attempts to find an existing menu of the specified title. If it can't be
-        found, it creates one.
+        If it can't be found, it creates one.
         """
         # Get the "main menu" (the bar of menus)
-        main_menu = cls.__get_katana_main_menu()
-        if not main_menu:
+        try:
+            main_menu = self.get_katana_main_bar()
+        except Exception as error:
+            message = 'Failed to get main Katana menu bar: {}'.format(error)
+            self.engine.log_error(message)
             return
 
         # Attempt to find existing menu
         for menu in main_menu.children():
-            if type(menu).__name__ == "QMenu" and menu.title() == menu_name:
+            is_menu = isinstance(menu, QtGui.QMenu)
+            if is_menu and menu.title() == self.menu_name:
                 return menu
 
         # Otherwise, create a new menu
-        menu = QtGui.QMenu(menu_name, main_menu)
+        menu = QtGui.QMenu(self.menu_name, main_menu)
         main_menu.addMenu(menu)
         return menu
 
     @classmethod
-    def __get_katana_main_menu(cls):
-        layoutsMenus = [x for x in QtGui.qApp.topLevelWidgets() if type(x).__name__ == 'LayoutsMenu']
-        if len(layoutsMenus) != 1:
-            return
-
-        mainMenu = layoutsMenus[0].parent()
-        return mainMenu
+    def get_katana_main_bar(cls):
+        import UI4.App.MainWindow
+        return UI4.App.MainWindow.GetMainWindow().getMenuBar()
 
     def destroy_menu(self):
         """
@@ -132,28 +112,25 @@ class MenuGenerator(object):
         if self.root_menu is not None:
             self.root_menu.clear()
 
-    ##########################################################################################
+    ###########################################################################
     # context menu and UI
 
-    def _add_context_menu(self, menu_handle):
+    def _add_context_menu(self):
         """
         Adds a context menu which displays the current context.
         """
+        # create the context menu
         ctx = self.engine.context
-        ctx_name = str(ctx)
+        menu = self.root_menu.addMenu(str(ctx))
+        action_items = (
+            ('Jump to File System', self._jump_to_fs),
+            ('Jump to Shotgun', self._jump_to_sg),
+        )
+        for label, callback in action_items:
+            menu.addAction(label).triggered.connect(lambda: callback())
 
-        # create the menu object
-        ctx_menu = menu_handle.addMenu(ctx_name)
-
-        action = QtGui.QAction('Jump to Shotgun', self.root_menu, triggered=self._jump_to_sg)
-        ctx_menu.addAction(action)
-
-        action = QtGui.QAction('Jump to File System', self.root_menu, triggered=self._jump_to_fs)
-        ctx_menu.addAction(action)
-
-        ctx_menu.addSeparator()
-
-        return ctx_menu
+        menu.addSeparator()
+        return menu
 
     def _jump_to_sg(self):
         """
@@ -187,37 +164,28 @@ class MenuGenerator(object):
             if exit_code != 0:
                 self.engine.log_error("Failed to launch '%s'!" % cmd)
 
-    ##########################################################################################
+    ###########################################################################
     # app menus
 
-    def _add_app_menu(self, commands_by_app, menu_handle):
+    def _add_app_menu(self, commands_by_app):
         """
         Add all apps to the main menu, process them one by one.
         """
-        for app_name in sorted(commands_by_app.keys()):
-
-            if len(commands_by_app[app_name]) > 1:
-                # more than one menu entry fort his app
-                # make a sub menu and put all items in the sub menu
-                app_menu = menu_handle.addMenu(app_name)
-
-                # get the list of menu cmds for this app
-                cmds = commands_by_app[app_name]
-                # make sure it is in alphabetical order
-                cmds.sort(key=lambda x: x.name)
-
-                for cmd in cmds:
-                    cmd.add_command_to_menu(app_menu)
-
-            else:
-                # this app only has a single entry.
-                # display that on the menu
+        for app_name, commands in sorted(commands_by_app.items()):
+            if len(commands) == 1:
+                # Single entry, display on root menu
                 # todo: Should this be labelled with the name of the app
                 # or the name of the menu item? Not sure.
-                cmd_obj = commands_by_app[app_name][0]
-                if not cmd_obj.favourite:
-                    # skip favourites since they are alreay on the menu
-                    cmd_obj.add_command_to_menu(menu_handle)
+                app_menu = self.root_menu
+                # Skip if favourite (since it is already on the menu)
+                commands = [] if commands[0].favourite else commands
+            else:
+                # More than one menu entry for this app
+                # make a sub menu and put all items in the sub menu
+                app_menu = self.root_menu.addMenu(app_name)
+
+            for app_command in commands:
+                app_command.add_command_to_menu(app_menu)
 
 
 class AppCommand(object):
@@ -277,23 +245,22 @@ class AppCommand(object):
         """
         return self.properties.get("type", "default")
 
-    def do_add_command(self, menu, name, cmd, hot_key=None, icon=None):
-        # TODO add hot key
-        if hot_key:
-            action = QtGui.QAction(name, menu, triggered=cmd, icon=icon)
-        else:
-            if icon:
-                new_icon = QtGui.QIcon(icon)
-                action = QtGui.QAction(name, menu, triggered=cmd, icon=new_icon)
-            else:
-                action = QtGui.QAction(name, menu, triggered=cmd)
-        menu.addAction(action)
-
     def add_command_to_menu(self, menu):
         """
-        Adds an app command to the menu.
+        Add a new QAction representing this AppCommand to a given QMenu.
         """
-        # std shotgun menu
-        icon = self.properties.get("icon")
-        hotkey = self.properties.get("hotkey")
-        self.do_add_command(menu,self.name, self.callback, hot_key=hotkey, icon=icon)
+        action = menu.addAction(self.name)
+
+        key_sequence = self.properties.get("hotkey")
+        if key_sequence:
+            action.setShortcut(QtGui.QKeySequence(key_sequence))
+
+        icon_path = self.properties.get("icon")
+        if icon_path:
+            icon = QtGui.QIcon(icon_path)
+            if not icon.isNull():
+                action.setIcon(icon)
+
+        # Wrap to avoid passing args
+        action.triggered.connect(lambda: self.callback())
+        return action

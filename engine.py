@@ -87,7 +87,6 @@ class KatanaEngine(tank.platform.Engine):
 
         tk_katana = self.import_module("tk_katana")
         self._menu_generator = tk_katana.MenuGenerator(self, menu_name)
-        self._menu_generator.create_menu()
 
     def pre_app_init(self):
         """
