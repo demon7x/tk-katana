@@ -24,7 +24,7 @@ class KatanaEngine(tank.platform.Engine):
     """
 
     def __init__(self, *args, **kwargs):
-        self._ui_enabled = Configuration.get('KATANA_UI_MODE')
+        self._ui_enabled = bool(Configuration.get('KATANA_UI_MODE'))
         super(KatanaEngine, self).__init__(*args, **kwargs)
 
     @property
@@ -63,6 +63,7 @@ class KatanaEngine(tank.platform.Engine):
             QtCore.Signal = QtCore.pyqtSignal
             QtCore.Slot = QtCore.pyqtSlot
             QtCore.Property = QtCore.pyqtProperty
+            QtCore.__version__ = QtCore.qVersion()
             base["qt_core"] = QtCore
             base["qt_gui"] = QtGui
             base["dialog_base"] = QtGui.QDialog
@@ -87,7 +88,6 @@ class KatanaEngine(tank.platform.Engine):
 
         tk_katana = self.import_module("tk_katana")
         self._menu_generator = tk_katana.MenuGenerator(self, menu_name)
-        self._menu_generator.create_menu()
 
     def pre_app_init(self):
         """
