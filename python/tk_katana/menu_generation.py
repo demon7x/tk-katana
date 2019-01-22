@@ -7,6 +7,8 @@ import os
 import sys
 import unicodedata
 
+import tank
+
 from Katana import QtGui, QtCore
 
 
@@ -37,10 +39,10 @@ class MenuGenerator(object):
             if app_command.favourite:
                 app_command.add_command_to_menu(self.root_menu)
 
-            if app_command.get_type() == "context_menu":
+            if app_command.type == "context_menu":
                 app_command.add_command_to_menu(self._context_menu)
             else:
-                app_name = app_command.get_app_name() or "Other Items"
+                app_name = app_command.app_name
                 apps_commands[app_name].append(app_command)
         self.root_menu.addSeparator()
 
@@ -61,8 +63,7 @@ class MenuGenerator(object):
         favourites = self.engine.get_setting("menu_favourites", default=[])
 
         for cmd_name, cmd_details in sorted(self.engine.commands.items()):
-            app_command = AppCommand(cmd_name, cmd_details)
-
+            app_command = AppCommand(self.engine, cmd_name, cmd_details)
             for item in favourites:
                 matching_app_and_name = (
                     app_command.name == item["name"] and
@@ -193,57 +194,135 @@ class AppCommand(object):
     Wraps around a single command that you get from engine.commands
     """
 
-    def __init__(self, name, command_dict):
-        self.name = name
-        self.properties = command_dict["properties"]
-        self.callback = command_dict["callback"]
-        self.favourite = False
+    def __init__(self, engine, name, command_dict):
+        """Create a named wrapped command using given engine and information.
 
-    def get_app_name(self):
+        :param engine: The currently-running engine.
+        :type engine: :class:`tank.platform.Engine`
+        :param name: The name/label of the app command.
+        :type name: str
+        :param command_dict: Command's information, e.g. properties, callback.
+        :type command_dict: dict[str]
         """
+        self._name = name
+        self._engine = engine
+        self._properties = command_dict["properties"]
+        self._callback = command_dict["callback"]
+        self._favourite = False
+        self._type = self._properties.get("type", "default")
+        self._app = self._properties.get("app")
+
+        self._app_name = "Other Items"
+        self._app_instance_name = None
+
+        if self._app:
+            try:
+                self._app_name = self._app.display_name
+            except AttributeError:
+                pass
+
+            for app_instance_name, app_instance_obj in engine.apps.items():
+                if self._app == app_instance_obj:
+                    self._app_instance_name = app_instance_name
+                    break
+
         Returns the name of the app that this command belongs to
         """
         if "app" in self.properties:
             return self.properties["app"].display_name
         return None
 
-    def get_app_instance_name(self):
-        """
-        Returns the name of the app instance, as defined in the environment.
-        Returns None if not found.
-        """
-        if "app" not in self.properties:
-            return None
+    @property
+    def app(self):
+        """The command's parent app."""
+        return self._app
 
-        app_instance = self.properties["app"]
-        engine = app_instance.engine
+    @property
+    def app_instance_name(self):
+        """The instance name of the parent app."""
+        return self._app_instance_name
 
-        for (app_instance_name, app_instance_obj) in engine.apps.items():
-            if app_instance_obj == app_instance:
-                # found our app!
-                return app_instance_name
+    @property
+    def app_name(self):
+        """The name of the parent app."""
+        return self._app_name
 
-        return None
+    @property
+    def name(self):
+        """The name of the command."""
+        return self._name
+
+    @name.setter
+    def name(self, name):
+        self._name = str(name)
+
+    @property
+    def engine(self):
+        """The currently-running engine."""
+        return self._engine
+
+    @property
+    def properties(self):
+        """The command's properties dictionary."""
+        return self._properties
+
+    @property
+    def callback(self):
+        """The callback function associated with the command."""
+        return self._callback
+
+    @property
+    def favourite(self):
+        """Whether the command is a favourite."""
+        return self._favourite
+
+    @favourite.setter
+    def favourite(self, state):
+        self._favourite = bool(state)
+
+    @property
+    def type(self):
+        """The command's type as a string."""
+        return self._type
 
     def get_documentation_url_str(self):
         """
-        Returns the documentation as a str.
+        Returns the documentation URL.
         """
-        if "app" in self.properties:
-            app = self.properties["app"]
-            doc_url = app.documentation_url
-            # deal with nuke's inability to handle unicode. #fail
-            if doc_url.__class__ == unicode:
-                doc_url = unicodedata.normalize('NFKD', doc_url).encode('ascii', 'ignore')
+        doc_url = None
+        if self.app:
+            doc_url = self.app.documentation_url
+            if isinstance(doc_url, unicode):
+                doc_url = unicodedata.normalize('NFKD', doc_url)
+                doc_url = doc_url.encode('ascii', 'ignore')
             return doc_url
 
-        return None
+    def _non_pane_menu_callback_wrapper(self, callback):
+        """
+        Callback for all non-pane menu commands.
 
-    def get_type(self):
+        :param callback:    A callable object that is triggered
+                            when the wrapper is invoked.
         """
-        Returns the command type (node, custom_pane or default).
-        """
-        return self.properties.get("type", "default")
+        # This is a wrapped menu callback for whenever an item is clicked
+        # in a menu which isn't the standard nuke pane menu. This ie because
+        # the standard pane menu in nuke provides nuke with an implicit state
+        # so that nuke knows where to put the panel when it is created.
+        # If the command is called from a non-pane menu however, this
+        # implicitly state does not exist and needs to be explicitly defined.
+        #
+        # For this purpose, we set a global flag to hint to the panelling
+        # logic to run its special window logic in this case.
+        #
+        # Note that because of nuke not using the import_module()
+        # system, it's hard to obtain a reference to the engine object
+        # right here - this is why we set a flag on the main tank
+        # object like this.
+        setattr(tank, "_callback_from_non_pane_menu", True)
+        try:
+            callback()
+        finally:
+            delattr(tank, "_callback_from_non_pane_menu")
 
     def add_command_to_menu(self, menu):
         """
