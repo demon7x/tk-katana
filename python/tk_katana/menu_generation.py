@@ -64,15 +64,10 @@ class MenuGenerator(object):
 
         for cmd_name, cmd_details in sorted(self.engine.commands.items()):
             app_command = AppCommand(self.engine, cmd_name, cmd_details)
-            for item in favourites:
-                matching_app_and_name = (
-                    app_command.name == item["name"] and
-                    app_command.get_app_instance_name() == item["app_instance"]
-                )
-                if matching_app_and_name:
-                    app_command.favourite = True
-                    break
-
+            app_command.favourite = any(
+                app_command == item
+                for item in favourites
+            )
             commands.append(app_command)
         return commands
 
@@ -87,7 +82,7 @@ class MenuGenerator(object):
             main_menu = self.get_katana_main_bar()
         except Exception as error:
             message = 'Failed to get main Katana menu bar: {}'.format(error)
-            self.engine.log_error(message)
+            self.engine.log_debug(message)
             return
 
         # Attempt to find existing menu
@@ -226,11 +221,34 @@ class AppCommand(object):
                     self._app_instance_name = app_instance_name
                     break
 
-        Returns the name of the app that this command belongs to
+    def __eq__(self, other):
+        """Check if our app command matches a given dictionary of attributes.
+
+        :param other: Another AppCommand or dictionary of attributes.
+        :type other: :class:`AppCommand` or dict[str]
+        :returns: Whether the other object is equivalent to this one.
+        :rtype: bool
         """
-        if "app" in self.properties:
-            return self.properties["app"].display_name
-        return None
+        if isinstance(other, AppCommand):
+            return (
+                self.app == other.app and
+                self.app_instance_name == other.app_instance_name and
+                self.app_name == other.app_name and
+                self.name == other.name and
+                self.engine == other.engine and
+                self.properties == other.properties and
+                self.callback == other.callback and
+                self.favourite == other.favourite and
+                self.type == other.type
+            )
+        elif isinstance(other, dict) and (
+                "name" in other and "app_instance" in other):
+            return (
+                self.name == other["name"] and
+                self.app_instance_name == other["app_instance"]
+            )
+        else:
+            return NotImplemented
 
     @property
     def app(self):
@@ -295,7 +313,7 @@ class AppCommand(object):
             if isinstance(doc_url, unicode):
                 doc_url = unicodedata.normalize('NFKD', doc_url)
                 doc_url = doc_url.encode('ascii', 'ignore')
-            return doc_url
+        return doc_url
 
     def _non_pane_menu_callback_wrapper(self, callback):
         """
