@@ -54,7 +54,7 @@ class KatanaLauncher(SoftwareLauncher):
         """
         The minimum software version that is supported by the launcher.
         """
-        return "3.0v5"
+        return "2.6v4"
 
     def prepare_launch(self, exec_path, args, file_to_open=None):
         """
