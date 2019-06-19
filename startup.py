@@ -102,60 +102,52 @@ class KatanaLauncher(SoftwareLauncher):
         return engine_icon
 
     def scan_software(self):
-        """
-        Scan the filesystem for natron executables.
 
-        :return: A list of :class:`SoftwareVersion` objects.
-        """
-        self.logger.debug("Scanning for Natron executables...")
+        try:
+            import rez as _
+        except ImportError:
+            rez_path = self.get_rez_module_root()
+            if not rez_path:
+                raise EnvironmentError('rez is not installed and could not be automatically found. Cannot continue.')
+
+            sys.path.append(rez_path)
+        from rez.package_search import ResourceSearcher , ResourceSearchResultFormatter
+
+
+        searcher = ResourceSearcher()
+        formatter = ResourceSearchResultFormatter()
+        _ ,packages = searcher.search("katana")
 
         supported_sw_versions = []
-        for sw_version in self._find_software():
-            (supported, reason) = self._is_supported(sw_version)
-            if supported:
-                supported_sw_versions.append(sw_version)
-            else:
-                self.logger.debug(
-                    "SoftwareVersion %s is not supported: %s" %
-                    (sw_version, reason)
-                )
+        self.logger.debug("Scanning for katana executables...")
+        infos = formatter.format_search_results(packages)
+
+        for info in infos:
+            name,version = info[0].split("-")
+            
+
+            software = SoftwareVersion(version,name,"rez_init",self._icon_from_engine())
+            supported_sw_versions.append(software)
 
         return supported_sw_versions
 
-    def _find_software(self):
-        """
-        Find executables in the default install locations.
-        """
 
-        # all the executable templates for the current OS
-        executable_templates = self.EXECUTABLE_TEMPLATES.get(sys.platform, [])
+    def get_rez_module_root(self):
+        
+        
+        command = self.get_rez_root_command()
+        module_path, stderr = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True).communicate()
 
-        # all the discovered executables
-        sw_versions = []
+        module_path = module_path.strip()
 
-        for executable_template in executable_templates:
+        if not stderr and module_path:
+            return module_path
 
-            self.logger.debug("Processing template %s.", executable_template)
 
-            executable_matches = self._glob_and_match(
-                executable_template,
-                self.COMPONENT_REGEX_LOOKUP
-            )
 
-            # Extract all products from that executable.
-            for (executable_path, key_dict) in executable_matches:
+        return ''
 
-                # extract the matched keys form the key_dict (default to None
-                # if not included)
-                executable_version = key_dict.get("version")
+    def get_rez_root_command(self):
 
-                sw_versions.append(
-                    SoftwareVersion(
-                        executable_version,
-                        "Katana",
-                        executable_path,
-                        self._icon_from_engine()
-                    )
-                )
-
-        return sw_versions
+        return 'rez-env rez -- printenv REZ_REZ_ROOT'

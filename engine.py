@@ -120,8 +120,7 @@ class KatanaEngine(tank.platform.Engine):
             self.log_debug("Successfully initialized PyQt '%s' located in %s."
                             % (QtCore.PYQT_VERSION_STR, PyQt4.__file__))
         except ImportError:
-            print "iokj"
-            pass
+            print "PyQt import error"
         except Exception, e:
             import traceback
             self.log_warning("Error setting up PyQt. PyQt based UI support "
