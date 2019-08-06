@@ -131,11 +131,12 @@ class MenuGenerator(object):
         menu = self.root_menu.addMenu(str(ctx))
         action_items = (
             ('Jump to File System', self._jump_to_fs),
-            ('Jump to Shotgun', self._jump_to_sg),
+            #('Jump to Shotgun', self._jump_to_sg),
         )
         for label, callback in action_items:
             menu.addAction(label).triggered.connect(lambda: callback())
 
+        menu.addAction("Jump to Shotgun").triggered.connect(lambda: self._jump_to_sg())
         menu.addSeparator()
         return menu
 
@@ -143,6 +144,7 @@ class MenuGenerator(object):
         """
         Jump to Shotgun, launch web browser.
         """
+
         url = self.engine.context.shotgun_url
         QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
 
@@ -152,6 +154,7 @@ class MenuGenerator(object):
         """
         # launch one window for each location on disk
         paths = self.engine.context.filesystem_locations
+
         for disk_location in paths:
 
             # get the setting
