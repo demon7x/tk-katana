@@ -121,13 +121,16 @@ class KatanaLauncher(SoftwareLauncher):
         supported_sw_versions = []
         self.logger.debug("Scanning for katana executables...")
         infos = formatter.format_search_results(packages)
-
         for info in infos:
             name,version = info[0].split("-")
             
 
             software = SoftwareVersion(version,name,"rez_init",self._icon_from_engine())
-            supported_sw_versions.append(software)
+            
+            (supported, reason) = self._is_supported(software)
+            if supported:
+                if self.check_software(software):
+                    supported_sw_versions.append(software)
 
         return supported_sw_versions
 
@@ -151,3 +154,14 @@ class KatanaLauncher(SoftwareLauncher):
     def get_rez_root_command(self):
 
         return 'rez-env rez -- printenv REZ_REZ_ROOT'
+
+    def check_software(self,software):
+
+        filter_dict = [
+                    ['code','is',software.product+" "+software.version],
+                      ]
+        packages = self.shotgun.find("Software",filter_dict)
+
+        if packages:
+            return True
+        return False
